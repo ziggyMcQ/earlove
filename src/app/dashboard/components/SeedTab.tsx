@@ -91,7 +91,8 @@ export default function SeedTab({
     setLoadingRelated(true);
 
     try {
-      const res = await fetch(`/api/discover/seed?artistId=${artist.id}`, {
+      const genresQs = artist.genres?.length ? `&genres=${encodeURIComponent(artist.genres.join(','))}` : '';
+      const res = await fetch(`/api/discover/seed?artistId=${artist.id}${genresQs}`, {
         headers: { Authorization: `Bearer ${session!.accessToken}` },
       });
       if (!res.ok) {
