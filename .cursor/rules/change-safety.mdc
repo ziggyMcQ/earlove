@@ -1,0 +1,100 @@
+---
+description: Safety protocols for making changes to the earlove codebase. ALWAYS reference before modifying core infrastructure files.
+globs: src/lib/spotify.ts, src/lib/heard-profile.ts, src/app/api/**/*.ts
+alwaysApply: false
+---
+
+# Change Safety Protocols
+
+## The Golden Rule
+
+**If it works, don't change it to "improve" it.**
+
+The Spotify dev mode rate limits make this app extremely sensitive to timing changes. A delay that seems "too long" might be the exact value preventing a rate limit death spiral. A retry count that seems "too many" might be what recovers from transient 429s.
+
+## Files That Require Extra Caution
+
+### 🔴 HIGH RISK — Changes can break the entire app
+- `src/lib/spotify.ts` — The `fetch()` retry loop, delays, and `MAX_WAIT_S` are load-bearing values
+- `src/lib/heard-profile.ts` — The inter-call delays and phase sequencing are carefully tuned
+
+### 🟡 MEDIUM RISK — Changes can break individual features
+- `src/app/api/profile/*/route.ts` — The `maxDuration` export and error parsing
+- `src/app/dashboard/page.tsx` — Rate limit cooldown state management
+
+### 🟢 LOWER RISK — Changes are generally safe
+- UI components (tabs, cards, display logic)
+- Calculation/analysis functions that don't make API calls
+- Static data (genre lists, category mappings)
+
+## Before Changing Delay or Retry Values
+
+1. **Document the current working values** (copy them somewhere)
+2. **Explain WHY the change is needed** — "making it faster" is not a valid reason
+3. **Test the change in isolation** — don't change delays AND add new API calls simultaneously
+4. **Use the /api/health endpoint** to verify Spotify isn't already rate-limited before testing
+5. **If the change causes 429s, IMMEDIATELY revert** — don't try to "fix" the rate limit issue
+
+## Known Working Configuration (as of Jan 2026)
+
+```typescript
+// spotify.ts fetch()
+MAX_RETRIES = 3
+MAX_WAIT_S = 30  // Fail immediately if Retry-After > 30s
+
+// heard-profile.ts buildBasics()
+inter_call_delay = 2000  // Between each of 9 sequential calls
+
+// heard-profile.ts all pagination / genre probes
+inter_page_delay = 1500  // Between each paginated fetch
+
+// heard-profile.ts buildGenres()
+TIME_BUDGET_MS = 50_000  // Stop making calls after 50s
+max_artist_lookups = 8   // Individual /artists/{id} calls (only if no preloaded data)
+
+// search pagination
+SEARCH_LIMIT_MAX = 10    // Dev mode hard cap
+inter_search_delay = 50  // Between search pagination pages
+```
+
+## When Adding New Features
+
+### Feature adds new API calls
+1. Count how many new Spotify API calls the feature makes
+2. Add appropriate delays (1500ms minimum between calls)
+3. Verify the total phase time stays under 50s (leaving 10s buffer)
+4. Add `rate_limit_long` error handling
+5. Test with `/api/health` first to confirm no existing rate limit
+
+### Feature modifies existing API calls
+1. Read the CURRENT code first — understand why it's structured that way
+2. Check if the endpoint is still available in dev mode (see spotify-api-constraints)
+3. Do NOT reduce delays or remove retry logic
+4. Do NOT add parallel calls where sequential ones exist
+
+### Feature adds a new API route
+1. Add `export const maxDuration = 60;` at the top
+2. Implement `rate_limit_long` error parsing in the catch block
+3. Return structured error responses (not just 500s)
+
+## Regression Checklist
+
+After any change to core infrastructure, verify:
+- [ ] Profile basics loads without timeout (~18s for 9 calls)
+- [ ] Genre analysis completes within 60s (or returns partial data)
+- [ ] Library scan paginates correctly
+- [ ] Playlist creation works (uses `/me/playlists` and `/playlists/{id}/items`)
+- [ ] Rate limit cooldown shows in UI when triggered
+- [ ] Cached profile loads instantly on page refresh
+- [ ] Re-authentication flow works with `show_dialog=true`
+- [ ] `/api/health` returns `status: ok`
+
+## Debugging Checklist
+
+When something breaks:
+1. **Hit `/api/health`** first — is Spotify responding at all? What's the `Retry-After`?
+2. **Check browser console** — is it a client-side exception or a server timeout?
+3. **Check Vercel function logs** — look for `[Spotify] 429` or `rate_limit_long` entries
+4. **Wait for any existing rate limit to expire** before retesting
+5. **Compare current code to known working values** (listed above)
+6. **If a recent change broke it, revert first, debug second**

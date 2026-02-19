@@ -1,0 +1,73 @@
+---
+description: Built-in diagnostic tools for debugging Spotify API and app issues. Reference when troubleshooting.
+globs: src/app/api/health/**/*.ts
+alwaysApply: false
+---
+
+# Diagnostic Tools
+
+## /api/health Endpoint
+
+A lightweight diagnostic endpoint that tests Spotify API connectivity without triggering heavy profile builds.
+
+### Basic health check
+```
+GET /api/health?token={accessToken}
+```
+Returns: Spotify response status, elapsed time, user info, `Retry-After` header if rate-limited.
+
+### Playlist write test
+```
+GET /api/health?token={accessToken}&testwrite=1
+```
+Creates a temporary private playlist using BOTH old and new endpoints, then deletes it. Reports which endpoint works.
+
+### Getting the token from the browser console
+```javascript
+fetch("/api/health?token=" + JSON.parse(localStorage.getItem("earlove_session")).accessToken)
+  .then(r => r.json()).then(console.log)
+```
+
+### When to use it
+1. **Before testing any profile rebuild** — verify Spotify isn't rate-limited
+2. **When playlist creation fails** — run with `?testwrite=1` to check endpoint status
+3. **After deploying changes** — verify basic connectivity still works
+4. **When user reports errors** — first step in any debugging process
+
+### Interpreting results
+| Result | Meaning | Action |
+|---|---|---|
+| `status: ok`, `retry_after: null` | All clear | Safe to proceed |
+| `status: ok`, `retry_after: N` | Rate limited | Wait N seconds |
+| `status: error`, `spotify_status: 401` | Token expired | Re-authenticate |
+| `status: error`, `spotify_status: 403` | Forbidden | Check dev mode, scopes |
+| `status: error`, `spotify_status: 429` | Rate limited | Check `retry_after` value |
+| `playlist_write_test.POST /me/playlists.ok: true` | Playlist creation works | Good |
+| `playlist_write_test.POST /me/playlists.code: 403` | Missing playlist scope | Re-authenticate with all scopes |
+
+## Console Logging Convention
+
+All Spotify API logs use bracketed prefixes for filtering:
+
+```
+[Spotify] 429 on /me/top/tracks, Retry-After=5s (attempt 2/3)
+[Auth] Token granted scopes: user-read-recently-played user-top-read ...
+[Phase 1 Basics] Loading top tracks (short_term)...
+[Phase 4 Genres] Preloaded: 28 genres from 45 artists
+[Phase 4 Genres] Time budget reached after 12/30 probes
+```
+
+### Useful browser console commands for debugging
+```javascript
+// Check current session
+JSON.parse(localStorage.getItem("earlove_session"))
+
+// Check cached profile
+JSON.parse(localStorage.getItem("earlove_profile_cache"))
+
+// Clear cache (forces full rebuild)
+localStorage.removeItem("earlove_profile_cache")
+
+// Full reset
+localStorage.clear()
+```

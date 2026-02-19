@@ -1,8 +1,7 @@
-import { NextResponse } from 'next/server';
-import { clearSession } from '@/lib/session';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function GET(request: Request) {
-  await clearSession();
-  
+// Logout is now handled client-side via localStorage.clear()
+// This route exists as a fallback
+export async function GET(request: NextRequest) {
   return NextResponse.redirect(new URL('/', request.url));
 }

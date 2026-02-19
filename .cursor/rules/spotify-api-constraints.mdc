@@ -1,0 +1,109 @@
+---
+description: Spotify Web API dev mode constraints, rate limits, and endpoint rules. Reference this before making ANY changes to API calls.
+globs: src/lib/spotify.ts, src/lib/heard-profile.ts, src/app/api/**/*.ts
+alwaysApply: false
+---
+
+# Spotify API Dev Mode Constraints (Feb 2026)
+
+## Rate Limits — THE MOST CRITICAL CONSTRAINT
+
+Dev mode allows approximately **5-8 API requests per 30-second rolling window**.
+
+### What works (confirmed Feb 18, 2026)
+- **2000ms delay** between sequential calls in `buildBasics` (9 calls over ~18s)
+- **1500ms delay** between pages in library scan, playlist scan, genre probe, and discography
+- **3 retries** on 429 with Retry-After header respected
+- Sequential calls only — **NO parallel requests** (`Promise.all` with Spotify calls)
+
+### Death spiral pattern — NEVER LET THIS HAPPEN
+1. App hits 429 → retries → hits 429 again
+2. Spotify progressively increases `Retry-After` (observed up to **1145 seconds / 19 minutes**)
+3. Each failed attempt extends the penalty
+4. Function timeout + retry = more failed attempts = longer penalty
+
+### How to prevent the death spiral
+- If `Retry-After > 30 seconds`, **fail immediately** with `rate_limit_long:{seconds}` error
+- Surface the exact cooldown duration to the UI with a countdown timer
+- Block all API calls during cooldown (client-side guard)
+- Never auto-retry after a rate limit error — let the user trigger manually after cooldown
+
+### Values that are KNOWN TO WORK — do NOT change without testing
+```typescript
+// buildBasics: 2s between each of 9 sequential calls
+const delay = () => new Promise((r) => setTimeout(r, 2000));
+
+// Library/Playlist/Genre/Discography pagination: 1.5s between pages
+await new Promise((r) => setTimeout(r, 1500));
+
+// fetch() retry: 3 attempts, fail immediately if Retry-After > 30s
+const MAX_RETRIES = 3;
+const MAX_WAIT_S = 30;
+
+// Search pagination: 50ms between pages (search is lighter)
+await new Promise((r) => setTimeout(r, 50));
+```
+
+### Values that BROKE the app (do NOT use)
+- 300ms or 500ms delays between basics calls → triggers 429s
+- 600ms delays → still too fast for dev mode
+- Parallel `Promise.all` batches of 2+ Spotify calls → triggers 429s
+- Capping `Retry-After` at 8-10s → causes immediate re-429 on retry
+- Reducing retries to 1-2 → fails too fast, doesn't recover from transient 429s
+
+## Search Limits
+
+- **Max `limit` parameter: 10** (was 50 pre-migration)
+- Paginate with `offset` for more results: `searchPaginated()` fetches 3 pages of 10 = 30 results
+- `totalDesired = 30` with `50ms` inter-page delay
+
+## Removed Endpoints (403 or 404 in dev mode)
+
+| Old Endpoint | Status | Replacement |
+|---|---|---|
+| `POST /users/{user_id}/playlists` | **403 Forbidden** | `POST /me/playlists` |
+| `POST /playlists/{id}/tracks` | **403 Forbidden** | `POST /playlists/{id}/items` |
+| `GET /tracks?ids=` (batch) | May fail | Individual `GET /tracks/{id}` |
+| `GET /artists?ids=` (batch) | **Removed** | Individual `GET /artists/{id}` |
+| `GET /recommendations` | **Removed** | Use search + filtering |
+| `GET /recommendations/available-genre-seeds` | **404** | Static genre list |
+| `GET /browse/new-releases` | **403** | Use search |
+| `GET /artists/{id}/top-tracks` | **Removed** | Use search |
+| `GET /artists/{id}/related-artists` | **Removed** | Use search |
+| `GET /playlists/{id}/tracks` (non-owned) | **403** | Only owned playlists accessible |
+
+## Renamed Fields
+
+| Old Field | New Field | Context |
+|---|---|---|
+| `playlist.tracks` | `playlist.items` | Playlist object `total` count |
+
+Handle both: `p.tracks ?? p.items ?? { total: 0 }`
+
+## Stripped Fields (may be undefined/null)
+
+- `track.popularity` — stripped in dev mode
+- `track.external_ids.isrc` — stripped in dev mode  
+- `artist.genres` — may be empty array, NEVER assume it exists without `?.` optional chaining
+- `artist.popularity` — stripped
+- `artist.followers` — stripped
+- User `product` (premium/free) — stripped by dev mode `/me` endpoint
+
+## Required Scopes
+
+```typescript
+export const SPOTIFY_SCOPES = [
+  'user-read-recently-played',
+  'user-top-read',
+  'user-library-read',
+  'user-follow-read',
+  'playlist-read-private',
+  'playlist-read-collaborative',
+  'playlist-modify-public',
+  'playlist-modify-private',
+].join(' ');
+```
+
+- Use `show_dialog: 'true'` in auth URL to force re-consent when scopes change
+- Token refresh does NOT update scopes — user must fully re-authenticate
+- Log granted scopes in `getSpotifyTokens` for debugging: `console.log('[Auth] Token granted scopes:', data.scope)`

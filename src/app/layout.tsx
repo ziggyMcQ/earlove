@@ -12,8 +12,10 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const appName = process.env.NEXT_PUBLIC_APP_NAME || 'earlove';
+
 export const metadata: Metadata = {
-  title: "earlove - Discover What You Haven't Heard",
+  title: `${appName} - Discover What You Haven't Heard`,
   description: "Find the music you've somehow never played. Analyze your Spotify history to discover chart-toppers, new releases, and genres you've missed.",
 };
 

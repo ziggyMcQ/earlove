@@ -1,0 +1,126 @@
+---
+description: Defensive coding patterns required for Spotify dev mode. Reference when writing any code that processes Spotify API responses.
+globs: src/**/*.ts, src/**/*.tsx
+alwaysApply: false
+---
+
+# Defensive Coding Patterns for Spotify Dev Mode
+
+## Always Use Optional Chaining on Spotify Data
+
+Spotify dev mode strips, nullifies, or omits fields unpredictably. NEVER assume a field exists.
+
+### Fields that require defensive access
+```typescript
+// Genres — may be undefined, null, or empty array
+artist.genres?.length       // NOT artist.genres.length
+a.genres ?? []              // When mapping/iterating
+
+// Popularity — may be undefined
+track.popularity ?? null    // NOT track.popularity
+artist.popularity ?? null
+
+// External IDs — stripped in dev mode
+track.external_ids?.isrc    // NEVER assume ISRC exists
+
+// Playlist track count — field was renamed
+playlist.tracks ?? playlist.items ?? { total: 0 }
+
+// Followers — stripped
+artist.followers?.total ?? 0
+
+// Product type — stripped
+user.product ?? 'unknown'
+```
+
+### Pattern: Always sanitize API responses at the boundary
+When mapping Spotify results to internal types, normalize at the mapping layer:
+```typescript
+const artists = response.artists.items.map(a => ({
+  ...a,
+  genres: a.genres ?? [],           // Ensure always an array
+  popularity: a.popularity ?? 0,    // Ensure always a number
+  followers: a.followers ?? { total: 0 },
+}));
+```
+
+## Error Handling Patterns
+
+### Never silently swallow errors
+```typescript
+// BAD — hides failures, makes debugging impossible
+} catch { return []; }
+
+// GOOD — log the error, return graceful fallback
+} catch (err) {
+  console.error('[Phase] Failed:', err instanceof Error ? err.message : err);
+  return [];
+}
+```
+
+### Rate limit errors are special — propagate them
+```typescript
+catch (err) {
+  const msg = err instanceof Error ? err.message : '';
+  // ALWAYS propagate rate_limit_long so the UI can show a countdown
+  if (msg.startsWith('rate_limit_long:')) throw err;
+  // Other errors can be caught/handled locally
+  console.error('[Phase] Non-rate-limit error:', msg);
+}
+```
+
+### Break early on rate limits in loops
+When iterating over API calls (genre probes, artist lookups, pagination):
+```typescript
+for (const item of items) {
+  try {
+    const result = await client.someApiCall(item);
+    // process result
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.startsWith('rate_limit_long:')) break; // Stop the loop entirely
+    // Other errors: log and continue
+  }
+  await new Promise(r => setTimeout(r, 1500)); // Mandatory delay
+}
+```
+
+## Feature Availability Checks
+
+Before building any feature on a Spotify endpoint, verify it works in dev mode:
+
+1. Check the Feb 2026 migration guide
+2. Test with `/api/health` endpoint (add test cases as needed)
+3. If the endpoint returns 403 or 404, DO NOT build the feature on it
+4. Find an alternative approach (usually search-based)
+
+### Features that CAN'T use native endpoints
+| Feature | Can't Use | Alternative |
+|---|---|---|
+| Recommendations | `/recommendations` (removed) | Search + genre/artist filtering |
+| Genre seeds | `/available-genre-seeds` (removed) | Static `PROBE_GENRES` list |
+| Related artists | `/related-artists` (removed) | Search by genre + check overlap |
+| New releases | `/browse/new-releases` (403) | Search recent releases by date |
+| Artist top tracks | `/top-tracks` (removed) | Search `artist:"Name"` |
+| Batch artist lookup | `GET /artists?ids=` (removed) | Individual `/artists/{id}` calls with delays |
+
+## UI Resilience
+
+### Loading states must handle ALL outcomes
+Every profile phase can result in:
+1. **Success** — full data
+2. **Partial success** — some data, hit time budget or rate limit
+3. **Rate limit** — no data, `rate_limit_long` with countdown
+4. **Timeout** — function killed by Vercel (client gets network error)
+5. **Auth error** — token expired, need re-auth
+
+The UI MUST handle all 5 gracefully — never leave the user in a stuck state.
+
+### Show actionable error messages
+```typescript
+// BAD
+setError('Something went wrong');
+
+// GOOD  
+setError('Spotify rate limited — cooldown expires in 3 minutes. Click "Retry" after the timer.');
+```

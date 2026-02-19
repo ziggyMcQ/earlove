@@ -1,32 +1,44 @@
-import { NextResponse } from 'next/server';
-import { getAccessToken } from '@/lib/session';
+import { NextRequest, NextResponse } from 'next/server';
 import { SpotifyClient } from '@/lib/spotify';
 import { buildHeardProfile, filterUnheardTracks } from '@/lib/heard-profile';
 
-// Spotify's Global Top 50 playlist ID
-const GLOBAL_TOP_50_PLAYLIST = '37i9dQZEVXbMDoHDwVN2tF';
+/**
+ * Missing Hits — simplified to a single search to debug
+ * why results aren't coming through despite working in diagnostics.
+ */
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get('authorization');
+  const accessToken = authHeader?.replace('Bearer ', '');
 
-export async function GET() {
-  const accessToken = await getAccessToken();
-  
   if (!accessToken) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
 
   try {
     const client = new SpotifyClient(accessToken);
-    
-    // Build the heard profile
     const profile = await buildHeardProfile(client);
-    
-    // Fetch Global Top 50
-    const topTracks = await client.getPlaylistTracks(GLOBAL_TOP_50_PLAYLIST);
-    
-    // Filter out tracks the user has heard
-    const unheardTracks = filterUnheardTracks(topTracks, profile, true);
-    
+
+    // Single search — identical to what works in the debug endpoint
+    let searchResults: Awaited<ReturnType<typeof client.search>> = [];
+    let searchError: string | null = null;
+    try {
+      searchResults = await client.search('genre:"pop"', 'track', 50);
+    } catch (err) {
+      searchError = err instanceof Error ? err.message : String(err);
+      searchResults = [];
+    }
+
+    const unheardTracks = filterUnheardTracks(searchResults, profile, false);
+
     return NextResponse.json({
-      tracks: unheardTracks,
+      tracks: unheardTracks.slice(0, 30),
+      debug: {
+        searchReturned: searchResults.length,
+        unheardCount: unheardTracks.length,
+        profileTracks: profile.trackIds.size,
+        profileArtists: profile.artistIds.size,
+        searchError,
+      },
       profileStats: {
         tracksAnalyzed: profile.totalTracksAnalyzed,
         buildTime: profile.buildTime,

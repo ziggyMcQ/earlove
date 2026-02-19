@@ -1,0 +1,144 @@
+---
+description: Vercel serverless function constraints and the phased profile loading architecture. Reference when modifying API routes or profile building.
+globs: src/app/api/**/*.ts, src/lib/heard-profile.ts, src/app/dashboard/page.tsx
+alwaysApply: false
+---
+
+# Serverless Architecture & Phased Profile Loading
+
+## Vercel Function Constraints
+
+### Timeout limits
+- **Hobby tier default: 10 seconds** (unless overridden)
+- **Maximum allowed: 60 seconds** with explicit export
+- EVERY API route that builds profile data MUST include:
+  ```typescript
+  export const maxDuration = 60;
+  ```
+- This is NOT optional — routes without it default to 10s and WILL time out during profile builds
+
+### Routes that MUST have `maxDuration = 60`
+- `/api/profile/basics/route.ts`
+- `/api/profile/library/route.ts`
+- `/api/profile/playlists/route.ts`
+- `/api/profile/genres/route.ts`
+- `/api/profile/discography/route.ts`
+- `/api/profile/mainstream/route.ts`
+
+### Routes that are lightweight (shorter timeout OK)
+- `/api/health/route.ts` → `maxDuration = 30`
+- `/api/auth/*/route.ts` → default is fine
+
+## The Phased Profile Loading Pattern
+
+### Why phases exist
+A complete profile needs ~50+ API calls. Running them all in one serverless invocation would:
+1. Exceed the 60s Vercel timeout
+2. Trigger Spotify rate limits (death spiral)
+3. Give the user no progress feedback
+
+### The 6 phases (client-driven, sequential)
+Each phase is a separate API route call triggered by the client after the previous one completes.
+
+| Phase | Route | API Calls | Estimated Duration |
+|---|---|---|---|
+| 1. Basics | `/api/profile/basics` | 9 sequential calls (2s delays) | ~18s |
+| 2. Library | `/api/profile/library` | Paginated saved tracks (1.5s delays) | ~15-30s |
+| 3. Playlists | `/api/profile/playlists` | Owned playlists + tracks (1.5s delays) | ~15-30s |
+| 4. Genres | `/api/profile/genres` | Genre probe searches (1.5s delays) | ~30-50s |
+| 5. Discography | `/api/profile/discography` | Album scans per artist (1.5s delays) | ~15-30s |
+| 6. Mainstream | `/api/profile/mainstream` | Search comparisons | ~10-20s |
+
+### Client-side orchestration pattern
+```
+dashboard/page.tsx:
+  loadBasics() → wait for completion → show results
+  loadLibrary() → wait for completion → show results  
+  loadPlaylists() → wait for completion → show results
+  loadGenres(preloadedArtistGenres) → wait for completion → show results
+  ...
+```
+
+### Data passing between phases (critical optimization)
+- `buildBasics` extracts artist genre data from top artists
+- This `preloadedArtistGenres` array is stored in client state
+- `loadGenres` sends it to `/api/profile/genres` in the request body
+- `buildGenres` uses it to skip 8-10 individual `/artists/{id}` calls
+- **This optimization saved ~15s of API calls and prevented genre phase timeouts**
+
+## Time Budget Pattern (for long-running phases)
+
+When a phase might exceed 60s, implement a TIME_BUDGET_MS guard:
+
+```typescript
+const startTime = Date.now();
+const TIME_BUDGET_MS = 50_000; // 50s, leaving 10s buffer for response
+const timeRemaining = () => TIME_BUDGET_MS - (Date.now() - startTime);
+
+// Before each API call:
+if (timeRemaining() < 3_000) {
+  console.log('[Phase] Time budget reached, returning partial results');
+  break;
+}
+```
+
+- **50s budget** (not 60s) — leave 10s buffer for JSON serialization and response
+- Always return whatever data was gathered, even if incomplete
+- Log how far the phase got for debugging
+
+## Rate Limit Error Propagation
+
+### Server-side pattern
+```typescript
+// In heard-profile.ts — re-throw rate_limit_long errors
+catch (err) {
+  const msg = err instanceof Error ? err.message : '';
+  if (msg.startsWith('rate_limit_long:')) throw err; // Let it bubble up
+}
+
+// In route.ts — parse and return structured response  
+catch (err) {
+  const msg = err instanceof Error ? err.message : '';
+  const match = msg.match(/^rate_limit_long:(\d+)/);
+  if (match) {
+    return NextResponse.json({
+      error: 'rate_limit',
+      retryAfter: parseInt(match[1], 10),
+    }, { status: 429 });
+  }
+}
+```
+
+### Client-side pattern
+```typescript
+// In dashboard/page.tsx — show countdown timer
+if (data.error === 'rate_limit' && data.retryAfter) {
+  const until = Date.now() + data.retryAfter * 1000;
+  setRateLimitUntil(until);
+  // useEffect with setInterval updates rateLimitCountdown every second
+}
+
+// Before any API call — check if still in cooldown
+if (rateLimitUntil && Date.now() < rateLimitUntil) {
+  return; // Don't even try
+}
+```
+
+## Caching (localStorage)
+
+### Session storage
+```typescript
+localStorage.setItem('earlove_session', JSON.stringify({
+  accessToken, refreshToken, expiresAt
+}));
+```
+
+### Profile cache (`profile-cache.ts`)
+- Cache full profile data in localStorage for instant reload
+- Avoids re-building profile on page refresh / navigation
+- User can manually trigger "Refresh All Data" to rebuild from scratch
+
+### What NOT to use for auth
+- HttpOnly cookies in route handlers (don't persist correctly in Vercel)
+- Base64-encoded session cookies (browser rejection / size limits)
+- Server-side session storage (stateless serverless)
