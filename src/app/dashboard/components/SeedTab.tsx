@@ -92,7 +92,8 @@ export default function SeedTab({
 
     try {
       const genresQs = artist.genres?.length ? `&genres=${encodeURIComponent(artist.genres.join(','))}` : '';
-      const res = await fetch(`/api/discover/seed?artistId=${artist.id}${genresQs}`, {
+      const nameQs = `&name=${encodeURIComponent(artist.name)}`;
+      const res = await fetch(`/api/discover/seed?artistId=${artist.id}${genresQs}${nameQs}`, {
         headers: { Authorization: `Bearer ${session!.accessToken}` },
       });
       if (!res.ok) {

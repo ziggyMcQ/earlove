@@ -132,8 +132,6 @@ export default function YourEarTab(props: YourEarTabProps) {
   const totalDurationMs = trackDurations.reduce((a, b) => a + b, 0);
   const explicitPercent = totalProcessed > 0 ? Math.round((explicitCount / totalProcessed) * 100) : 0;
 
-  const listeningByHour = computeListeningByHour(recentPlayedTimes);
-
   const libraryAgeLabel = earliestSavedAt ? formatLibraryAge(earliestSavedAt) : null;
 
   return (
@@ -327,7 +325,7 @@ export default function YourEarTab(props: YourEarTabProps) {
       )}
 
       {/* Listening DNA — enriched metrics from existing API data */}
-      {(trackDurations.length > 0 || listeningByHour.length > 0 || libraryAgeLabel) && (
+      {(trackDurations.length > 0 || libraryAgeLabel) && (
         <section className="bg-zinc-900/30 border border-zinc-800/30 rounded-xl p-5">
           <div className="flex items-center justify-center gap-1 mb-5">
             <h3 className="text-sm font-bold text-zinc-300 tracking-tight">
@@ -335,11 +333,11 @@ export default function YourEarTab(props: YourEarTabProps) {
             </h3>
             <InfoTooltip
               text="Additional insights extracted from data Spotify already includes in your track and library responses — no extra API calls needed."
-              detail="Duration, explicit flags, play timestamps, and library save dates are all free fields in existing responses."
+              detail="Duration, explicit flags, and library save dates are all free fields in existing responses."
             />
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="flex flex-wrap justify-center gap-6 sm:gap-10">
             {avgDurationMs > 0 && (
               <MetricCard
                 value={formatDuration(avgDurationMs)}
@@ -371,22 +369,6 @@ export default function YourEarTab(props: YourEarTabProps) {
               />
             )}
           </div>
-
-          {/* Listening time-of-day heatmap */}
-          {listeningByHour.length > 0 && (
-            <div className="mt-6">
-              <div className="flex items-center justify-center gap-1 mb-3">
-                <h4 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-[0.15em]">
-                  When You Listen
-                </h4>
-                <InfoTooltip
-                  text="Distribution of your last 50 plays by hour of day (your local time). Based on the played_at timestamp from Spotify's recently-played endpoint."
-                  detail="Only reflects your most recent listening session — Spotify limits this to 50 plays."
-                />
-              </div>
-              <HourHeatmap data={listeningByHour} />
-            </div>
-          )}
         </section>
       )}
 
@@ -588,17 +570,6 @@ function formatLibraryAge(isoDate: string): string {
   return months > 0 ? `${months}mo` : '<1mo';
 }
 
-function computeListeningByHour(timestamps: string[]): { hour: number; count: number }[] {
-  if (timestamps.length === 0) return [];
-  const counts = new Array(24).fill(0);
-  for (const ts of timestamps) {
-    const hour = new Date(ts).getHours();
-    counts[hour]++;
-  }
-  const hasData = counts.some(c => c > 0);
-  if (!hasData) return [];
-  return counts.map((count, hour) => ({ hour, count }));
-}
 
 function MetricCard({ value, label, tooltip, detail }: {
   value: string;
@@ -617,38 +588,6 @@ function MetricCard({ value, label, tooltip, detail }: {
   );
 }
 
-function HourHeatmap({ data }: { data: { hour: number; count: number }[] }) {
-  const maxCount = Math.max(...data.map(d => d.count), 1);
-  const labels = ['12a', '', '', '3a', '', '', '6a', '', '', '9a', '', '', '12p', '', '', '3p', '', '', '6p', '', '', '9p', '', ''];
-
-  return (
-    <div className="flex items-end gap-px h-12 justify-center">
-      {data.map(({ hour, count }) => {
-        const intensity = count / maxCount;
-        const bg = count === 0
-          ? 'bg-zinc-800/40'
-          : intensity >= 0.7
-            ? 'bg-green-400'
-            : intensity >= 0.3
-              ? 'bg-green-500/60'
-              : 'bg-green-600/30';
-
-        return (
-          <div key={hour} className="flex flex-col items-center group" style={{ width: '100%', maxWidth: 20 }}>
-            <div
-              className={`w-full rounded-sm ${bg} transition-all group-hover:ring-1 group-hover:ring-green-400/40`}
-              style={{ height: `${Math.max(count === 0 ? 15 : (intensity * 100), 15)}%`, minHeight: 4 }}
-              title={`${hour === 0 ? '12' : hour > 12 ? hour - 12 : hour}${hour < 12 ? 'am' : 'pm'}: ${count} play${count !== 1 ? 's' : ''}`}
-            />
-            {labels[hour] && (
-              <span className="text-[7px] text-zinc-600 mt-1 font-mono">{labels[hour]}</span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ─── Taste Drift Section ─────────────────────────────────────
 
