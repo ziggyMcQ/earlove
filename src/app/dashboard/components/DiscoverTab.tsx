@@ -29,6 +29,7 @@ interface SpotifyArtistResult {
   name: string;
   genres: string[];
   images: { url: string; width: number; height: number }[];
+  followers?: { total: number };
   external_urls: { spotify: string };
 }
 
@@ -667,27 +668,37 @@ export default function DiscoverTab(props: DiscoverTabProps) {
                   </div>
 
                   {artistResults.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {artistResults.slice(0, 16).map((artist) => {
                         const img = artist.images?.[1]?.url || artist.images?.[0]?.url;
+                        const followers = artist.followers?.total;
                         return (
                           <SpotifyLink
                             key={artist.id}
                             type="artist"
                             id={artist.id}
-                            className="group bg-zinc-900/50 border border-zinc-800/40 rounded-xl p-3 hover:border-green-500/30 hover:bg-zinc-800/40 transition-all text-center"
+                            className="group flex items-center gap-4 bg-zinc-900/50 border border-zinc-800/40 rounded-xl p-3 hover:border-green-500/30 hover:bg-zinc-800/40 transition-all"
                           >
                             {img ? (
-                              <img src={img} alt={artist.name} className="w-20 h-20 rounded-full mx-auto mb-2 shadow-lg group-hover:shadow-green-500/10 object-cover" />
+                              <img src={img} alt={artist.name} className="w-16 h-16 rounded-full shadow-lg group-hover:shadow-green-500/10 object-cover flex-shrink-0" />
                             ) : (
-                              <div className="w-20 h-20 rounded-full mx-auto mb-2 bg-zinc-800 flex items-center justify-center text-zinc-600 text-2xl">
+                              <div className="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-600 text-xl flex-shrink-0">
                                 &#x266B;
                               </div>
                             )}
-                            <p className="text-sm font-medium text-zinc-200 truncate group-hover:text-green-400 transition-colors">{artist.name}</p>
-                            {artist.genres?.length > 0 && (
-                              <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{artist.genres.slice(0, 2).join(', ')}</p>
-                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-zinc-200 truncate group-hover:text-green-400 transition-colors">{artist.name}</p>
+                              {followers != null && followers > 0 && (
+                                <p className="text-xs text-zinc-500 mt-0.5">{formatFollowers(followers)} followers</p>
+                              )}
+                              {artist.genres?.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                  {artist.genres.slice(0, 3).map((g) => (
+                                    <span key={g} className="px-1.5 py-0.5 rounded-full text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700/50">{g}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </SpotifyLink>
                         );
                       })}
@@ -754,6 +765,14 @@ export default function DiscoverTab(props: DiscoverTabProps) {
       )}
     </div>
   );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────
+
+function formatFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  return String(n);
 }
 
 // ─── Reusable action button ───────────────────────────────────
