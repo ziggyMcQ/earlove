@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
   // from those results. Spotify's track search returns contextually related music.
   if (artistName) {
     try {
-      const tracks = await client.searchPaginated(artistName, 'track', 30);
+      const tracks = await client.searchPaginated(`artist:"${artistName}"`, 'track', 30);
       const artistMap = new Map<string, {
         id: string;
         name: string;
