@@ -7,6 +7,7 @@ import Link from 'next/link';
 import YourEarTab from './components/YourEarTab';
 import DiscoverTab from './components/DiscoverTab';
 import CurateTab from './components/CurateTab';
+import SeedTab from './components/SeedTab';
 import { loadCache, saveCache, clearCache, cacheAge, CachedProfile, PopularityTrack } from '@/lib/profile-cache';
 import { SPOTIFY_GENRES } from '@/lib/genres';
 
@@ -52,7 +53,7 @@ interface MainstreamResult {
 interface TasteDriftRange { id: string; name: string; genres: string[]; }
 
 type PhaseStatus = 'idle' | 'loading' | 'done' | 'error';
-type TabId = 'ear' | 'discover' | 'curate';
+type TabId = 'ear' | 'discover' | 'curate' | 'seed';
 
 // ─── Component ────────────────────────────────────────────────
 
@@ -726,6 +727,7 @@ export default function Dashboard() {
   const tabs: { id: TabId; label: string; badge?: number }[] = [
     { id: 'ear', label: 'Your Ear' },
     { id: 'discover', label: 'Discover' },
+    { id: 'seed', label: 'Seed' },
     { id: 'curate', label: 'Curate', badge: collectedTracks.length || undefined },
   ];
 
@@ -898,6 +900,16 @@ export default function Dashboard() {
                 creating={playlistCreating}
                 createError={playlistError}
                 createSuccess={playlistSuccess}
+              />
+            )}
+
+            {activeTab === 'seed' && (
+              <SeedTab
+                session={session}
+                heardArtists={heardArtists}
+                heardTracks={heardTracks}
+                onAddToPlaylist={addToPlaylist}
+                collectedTrackIds={new Set(collectedTracks.map((t) => t.id))}
               />
             )}
           </>

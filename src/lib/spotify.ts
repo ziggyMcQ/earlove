@@ -288,6 +288,16 @@ export class SpotifyClient {
   }
 
   /**
+   * Get artists related to a given artist (up to 20)
+   */
+  async getRelatedArtists(artistId: string): Promise<SpotifyArtist[]> {
+    const data = await this.fetch<{ artists: SpotifyArtist[] }>(
+      `/artists/${artistId}/related-artists`
+    );
+    return data.artists ?? [];
+  }
+
+  /**
    * Get multiple artists by fetching individually (batch endpoint removed)
    */
   async getArtists(ids: string[]): Promise<SpotifyArtist[]> {
