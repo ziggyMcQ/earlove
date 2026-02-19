@@ -11,6 +11,10 @@ interface Artist {
   images: { url: string; width: number; height: number }[];
   followers?: { total: number };
   external_urls: { spotify: string };
+  context?: {
+    trackCount: number;
+    sampleTracks: { name: string; albumName: string; albumImage?: string }[];
+  };
 }
 
 interface Track {
@@ -292,6 +296,11 @@ export default function SeedTab({
                             <span key={g} className="px-1.5 py-0.5 rounded-full text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700/50">{g}</span>
                           ))}
                         </div>
+                      )}
+                      {artist.context?.sampleTracks && artist.context.sampleTracks.length > 0 && (
+                        <p className="text-[11px] text-zinc-500 mt-1">
+                          via <span className="text-zinc-400">{artist.context.sampleTracks.map((t) => t.name).join(', ')}</span>
+                        </p>
                       )}
                     </div>
                     <button

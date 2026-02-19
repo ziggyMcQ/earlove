@@ -57,30 +57,46 @@ export async function GET(request: NextRequest) {
   if (artistName) {
     try {
       const tracks = await client.searchPaginated(artistName, 'track', 30);
-      const artistMap = new Map<string, { id: string; name: string; trackCount: number }>();
+      const artistMap = new Map<string, {
+        id: string;
+        name: string;
+        trackCount: number;
+        sampleTracks: { name: string; albumName: string; albumImage?: string }[];
+      }>();
 
       for (const track of tracks) {
         for (const a of track.artists) {
-          if (a.id !== artistId && !artistMap.has(a.id)) {
-            artistMap.set(a.id, { id: a.id, name: a.name, trackCount: 1 });
-          } else if (a.id !== artistId && artistMap.has(a.id)) {
-            artistMap.get(a.id)!.trackCount++;
+          if (a.id === artistId) continue;
+          const existing = artistMap.get(a.id);
+          const sample = {
+            name: track.name,
+            albumName: track.album?.name ?? '',
+            albumImage: track.album?.images?.[2]?.url || track.album?.images?.[0]?.url,
+          };
+          if (!existing) {
+            artistMap.set(a.id, { id: a.id, name: a.name, trackCount: 1, sampleTracks: [sample] });
+          } else {
+            existing.trackCount++;
+            if (existing.sampleTracks.length < 2) existing.sampleTracks.push(sample);
           }
         }
       }
 
-      const candidateIds = Array.from(artistMap.values())
+      const candidates = Array.from(artistMap.values())
         .sort((a, b) => b.trackCount - a.trackCount)
-        .slice(0, 8)
-        .map((a) => a.id);
+        .slice(0, 8);
 
-      const fullArtists: SpotifyArtist[] = [];
-      for (const id of candidateIds) {
+      const fullArtists: (SpotifyArtist & { context?: { trackCount: number; sampleTracks: { name: string; albumName: string; albumImage?: string }[] } })[] = [];
+      for (const c of candidates) {
         try {
-          const full = await client.getArtist(id);
-          fullArtists.push(full);
+          const full = await client.getArtist(c.id);
+          fullArtists.push({ ...full, context: { trackCount: c.trackCount, sampleTracks: c.sampleTracks } });
         } catch {
-          // Skip failed lookups, keep going
+          fullArtists.push({
+            id: c.id, name: c.name, genres: [], images: [],
+            external_urls: { spotify: `https://open.spotify.com/artist/${c.id}` },
+            context: { trackCount: c.trackCount, sampleTracks: c.sampleTracks },
+          });
         }
       }
 
