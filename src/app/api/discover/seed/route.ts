@@ -52,63 +52,84 @@ export async function GET(request: NextRequest) {
     console.log('[Seed] Genre lookup/search failed:', (err as Error)?.message);
   }
 
-  // Strategy 3: Search for tracks by the artist name, extract OTHER artists
-  // from those results. Spotify's track search returns contextually related music.
+  // Strategy 3: Two-pass track search
+  // Pass A: artist:"name" — finds literal collaborators (high confidence)
+  // Pass B: plain name search — finds broader associations (keep only 2+ appearances)
   if (artistName) {
+    type ArtistEntry = {
+      id: string;
+      name: string;
+      trackCount: number;
+      isCollaborator: boolean;
+      sampleTracks: { name: string; albumName: string; albumImage?: string }[];
+    };
+
+    const artistMap = new Map<string, ArtistEntry>();
+
+    const addTrack = (a: { id: string; name: string }, track: { name: string; album?: { name?: string; images?: { url: string }[] } }, collab: boolean) => {
+      if (a.id === artistId) return;
+      const sample = {
+        name: track.name,
+        albumName: track.album?.name ?? '',
+        albumImage: (track.album?.images as { url: string }[])?.[2]?.url || (track.album?.images as { url: string }[])?.[0]?.url,
+      };
+      const existing = artistMap.get(a.id);
+      if (!existing) {
+        artistMap.set(a.id, { id: a.id, name: a.name, trackCount: 1, isCollaborator: collab, sampleTracks: [sample] });
+      } else {
+        existing.trackCount++;
+        if (collab) existing.isCollaborator = true;
+        if (existing.sampleTracks.length < 2) existing.sampleTracks.push(sample);
+      }
+    };
+
     try {
-      const tracks = await client.searchPaginated(`artist:"${artistName}"`, 'track', 30);
-      const artistMap = new Map<string, {
-        id: string;
-        name: string;
-        trackCount: number;
-        sampleTracks: { name: string; albumName: string; albumImage?: string }[];
-      }>();
-
-      for (const track of tracks) {
-        for (const a of track.artists) {
-          if (a.id === artistId) continue;
-          const existing = artistMap.get(a.id);
-          const sample = {
-            name: track.name,
-            albumName: track.album?.name ?? '',
-            albumImage: track.album?.images?.[2]?.url || track.album?.images?.[0]?.url,
-          };
-          if (!existing) {
-            artistMap.set(a.id, { id: a.id, name: a.name, trackCount: 1, sampleTracks: [sample] });
-          } else {
-            existing.trackCount++;
-            if (existing.sampleTracks.length < 2) existing.sampleTracks.push(sample);
-          }
-        }
+      // Pass A: collaborators
+      const collabTracks = await client.searchPaginated(`artist:"${artistName}"`, 'track', 20);
+      for (const track of collabTracks) {
+        for (const a of track.artists) addTrack(a, track, true);
       }
 
-      const candidates = Array.from(artistMap.values())
-        .sort((a, b) => b.trackCount - a.trackCount)
-        .slice(0, 8);
-
-      const fullArtists: (SpotifyArtist & { context?: { trackCount: number; sampleTracks: { name: string; albumName: string; albumImage?: string }[] } })[] = [];
-      for (const c of candidates) {
-        try {
-          const full = await client.getArtist(c.id);
-          fullArtists.push({ ...full, context: { trackCount: c.trackCount, sampleTracks: c.sampleTracks } });
-        } catch {
-          fullArtists.push({
-            id: c.id, name: c.name, genres: [], images: [],
-            external_urls: { spotify: `https://open.spotify.com/artist/${c.id}` },
-            context: { trackCount: c.trackCount, sampleTracks: c.sampleTracks },
-          });
+      // Pass B: broader search (only if we need more results)
+      if (artistMap.size < 8) {
+        const broadTracks = await client.searchPaginated(artistName, 'track', 30);
+        for (const track of broadTracks) {
+          for (const a of track.artists) addTrack(a, track, false);
         }
       }
-
-      return NextResponse.json({ artists: fullArtists, source: 'track-artist-extraction' });
     } catch (error) {
-      console.error('[Seed] Track extraction failed:', error);
+      console.error('[Seed] Track search failed:', error);
       const message = error instanceof Error ? error.message : 'Search failed';
       if (message.startsWith('rate_limit')) {
         return NextResponse.json({ error: message }, { status: 429 });
       }
-      return NextResponse.json({ error: message }, { status: 500 });
+      // Continue with whatever we have so far
     }
+
+    // Keep collaborators (any count) + broad matches appearing 2+ times
+    const candidates = Array.from(artistMap.values())
+      .filter((a) => a.isCollaborator || a.trackCount >= 2)
+      .sort((a, b) => {
+        if (a.isCollaborator !== b.isCollaborator) return a.isCollaborator ? -1 : 1;
+        return b.trackCount - a.trackCount;
+      })
+      .slice(0, 12);
+
+    const fullArtists: (SpotifyArtist & { context?: { trackCount: number; sampleTracks: { name: string; albumName: string; albumImage?: string }[] } })[] = [];
+    for (const c of candidates) {
+      try {
+        const full = await client.getArtist(c.id);
+        fullArtists.push({ ...full, context: { trackCount: c.trackCount, sampleTracks: c.sampleTracks } });
+      } catch {
+        fullArtists.push({
+          id: c.id, name: c.name, genres: [], images: [],
+          external_urls: { spotify: `https://open.spotify.com/artist/${c.id}` },
+          context: { trackCount: c.trackCount, sampleTracks: c.sampleTracks },
+        });
+      }
+    }
+
+    return NextResponse.json({ artists: fullArtists, source: 'track-artist-extraction' });
   }
 
   return NextResponse.json({ artists: [], source: 'none' });
